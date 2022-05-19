@@ -30,6 +30,7 @@ struct Config<'a> {
     offline: bool,
     verbose: bool,
     workspace: bool,
+    packages: Vec<String>,
 }
 
 impl Default for Config<'_> {
@@ -51,6 +52,7 @@ impl Default for Config<'_> {
             offline: false,
             verbose: false,
             workspace: false,
+            packages: vec![],
         }
     }
 }
@@ -395,9 +397,9 @@ fn link_bpf_toolchain(config: &Config) {
     }
 }
 
-fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_metadata::Package) {
+fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_metadata::Package, package_arg: bool) {
     let program_name = {
-        let cdylib_targets = package
+        let mut cdylib_targets = package
             .targets
             .iter()
             .filter_map(|target| {
@@ -406,24 +408,25 @@ fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_m
                 } else {
                     None
                 }
-            })
-            .collect::<Vec<_>>();
+            });
 
-        match cdylib_targets.len() {
-            0 => {
+        match cdylib_targets.next(){
+            Some(target) => {
+                if cdylib_targets.next().is_some() {
+                    eprintln!(
+                        "{} crate contains multiple cdylib targets: {:?}",
+                        package.name, cdylib_targets
+                    );
+                    exit(1);
+                }
+                Some(target.replace('-', "_"))
+            },
+            None => {
                 println!(
                     "Note: {} crate does not contain a cdylib target",
                     package.name
                 );
                 None
-            }
-            1 => Some(cdylib_targets[0].replace("-", "_")),
-            _ => {
-                eprintln!(
-                    "{} crate contains multiple cdylib targets: {:?}",
-                    package.name, cdylib_targets
-                );
-                exit(1);
             }
         }
     };
@@ -478,6 +481,7 @@ fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_m
     // The following line is scanned by CI configuration script to
     // separate cargo caches according to the version of sbf-tools.
     let bpf_tools_version = "v1.25";
+    let package_name = &package.name;
     let package = "bpf-tools";
     let target_path = home_dir
         .join(".cache")
@@ -546,6 +550,10 @@ fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_m
         "bpfel-unknown-unknown",
         "--release",
     ];
+    if package_arg{
+        cargo_build_args.push("-p");
+        cargo_build_args.push(package_name);
+    }
     if config.no_default_features {
         cargo_build_args.push("--no-default-features");
     }
@@ -687,7 +695,7 @@ fn build_bpf(config: Config, manifest_path: Option<PathBuf>) {
 
     if let Some(root_package) = metadata.root_package() {
         if !config.workspace {
-            build_bpf_package(&config, metadata.target_directory.as_ref(), root_package);
+            build_bpf_package(&config, metadata.target_directory.as_ref(), root_package, false);
             return;
         }
     }
@@ -695,7 +703,14 @@ fn build_bpf(config: Config, manifest_path: Option<PathBuf>) {
     let all_bpf_packages = metadata
         .packages
         .iter()
-        .filter(|package| {
+        .filter_map(|package|if config.packages.is_empty() {
+            Some((package, false))
+        } else if config.packages.contains(&package.name){
+            Some((package, true))
+        } else {
+            None
+        })
+        .filter(|(package, _)| {
             if metadata.workspace_members.contains(&package.id) {
                 for target in package.targets.iter() {
                     if target.kind.contains(&"cdylib".to_string()) {
@@ -704,11 +719,10 @@ fn build_bpf(config: Config, manifest_path: Option<PathBuf>) {
                 }
             }
             false
-        })
-        .collect::<Vec<_>>();
+        });
 
-    for package in all_bpf_packages {
-        build_bpf_package(&config, metadata.target_directory.as_ref(), package);
+    for (package, package_arg) in all_bpf_packages {
+        build_bpf_package(&config, metadata.target_directory.as_ref(), package, package_arg);
     }
 }
 
@@ -804,6 +818,15 @@ fn main() {
                 .alias("all")
                 .help("Build all BPF packages in the workspace"),
         )
+        .arg(
+            Arg::with_name("package")
+                .short("p")
+                .long("package")
+                .takes_value(true)
+                .value_name("PACKAGE")
+                .multiple(true)
+                .help("Build only the specified package"),
+        )
         .get_matches_from(args);
 
     let bpf_sdk = value_t_or_exit!(matches, "bpf_sdk", PathBuf);
@@ -839,6 +862,7 @@ fn main() {
         offline: matches.is_present("offline"),
         verbose: matches.is_present("verbose"),
         workspace: matches.is_present("workspace"),
+        packages: values_t!(matches, "package", String).ok().unwrap_or_default(),
     };
     let manifest_path = value_t!(matches, "manifest_path", PathBuf).ok();
     build_bpf(config, manifest_path);
