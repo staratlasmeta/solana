@@ -26,6 +26,7 @@ struct Config {
     offline: bool,
     verbose: bool,
     workspace: bool,
+    packages: Vec<String>,
 }
 
 impl Default for Config {
@@ -44,6 +45,7 @@ impl Default for Config {
             offline: false,
             verbose: false,
             workspace: false,
+            packages: vec![],
         }
     }
 }
@@ -97,7 +99,7 @@ where
     }
 }
 
-fn test_bpf_package(config: &Config, target_directory: &Path, package: &cargo_metadata::Package) {
+fn test_bpf_package(config: &Config, target_directory: &Path, package: &cargo_metadata::Package, package_arg: bool) {
     let set_test_bpf_feature = package.features.contains_key("test-bpf");
 
     let bpf_out_dir = config
@@ -146,6 +148,10 @@ fn test_bpf_package(config: &Config, target_directory: &Path, package: &cargo_me
     if config.no_run {
         cargo_args.push("--no-run");
     }
+    if package_arg {
+        cargo_args.push("-p");
+        cargo_args.push(package.name.as_str());
+    }
 
     // If the program crate declares the "test-bpf" feature, pass it along to the tests so they can
     // distinguish between `cargo test` and `cargo test-bpf`
@@ -179,7 +185,7 @@ fn test_bpf(config: Config, manifest_path: Option<PathBuf>) {
 
     if let Some(root_package) = metadata.root_package() {
         if !config.workspace {
-            test_bpf_package(&config, metadata.target_directory.as_ref(), root_package);
+            test_bpf_package(&config, metadata.target_directory.as_ref(), root_package, false);
             return;
         }
     }
@@ -187,7 +193,14 @@ fn test_bpf(config: Config, manifest_path: Option<PathBuf>) {
     let all_bpf_packages = metadata
         .packages
         .iter()
-        .filter(|package| {
+        .filter_map(|package|if config.packages.is_empty(){
+            Some((package, false))
+        } else if config.packages.contains(&package.name) {
+            Some((package, true))
+        } else {
+            None
+        })
+        .filter(|(package, _)| {
             if metadata.workspace_members.contains(&package.id) {
                 for target in package.targets.iter() {
                     if target.kind.contains(&"cdylib".to_string()) {
@@ -196,11 +209,10 @@ fn test_bpf(config: Config, manifest_path: Option<PathBuf>) {
                 }
             }
             false
-        })
-        .collect::<Vec<_>>();
+        });
 
-    for package in all_bpf_packages {
-        test_bpf_package(&config, metadata.target_directory.as_ref(), package);
+    for (package, package_arg) in all_bpf_packages {
+        test_bpf_package(&config, metadata.target_directory.as_ref(), package, package_arg);
     }
 }
 
@@ -302,6 +314,15 @@ fn main() {
                 .multiple(true)
                 .help("All extra arguments are passed through to cargo test"),
         )
+        .arg(
+            Arg::with_name("package")
+                .short("p")
+                .long("package")
+                .takes_value(true)
+                .value_name("PACKAGE")
+                .multiple(true)
+                .help("Test only the specified package"),
+        )
         .get_matches_from(args);
 
     let mut config = Config {
@@ -320,6 +341,9 @@ fn main() {
         offline: matches.is_present("offline"),
         verbose: matches.is_present("verbose"),
         workspace: matches.is_present("workspace"),
+        packages: values_t!(matches, "package", String)
+            .ok()
+            .unwrap_or_else(Vec::new),
         ..Config::default()
     };
 
