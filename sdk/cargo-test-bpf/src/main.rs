@@ -128,6 +128,10 @@ fn test_bpf_package(config: &Config, target_directory: &Path, package: &cargo_me
     }
     build_bpf_args.push("--bpf-out-dir");
     build_bpf_args.push(&bpf_out_dir);
+    if package_arg {
+        build_bpf_args.push("-p");
+        build_bpf_args.push(package.name.as_str());
+    }
 
     spawn(
         &config.cargo_build_bpf,
