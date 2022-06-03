@@ -11,8 +11,13 @@ use {
     crossbeam_channel::{SendError, Sender as CrossbeamSender},
     itertools::Itertools,
     solana_measure::measure::Measure,
-    solana_perf::packet::PacketBatch,
-    solana_perf::sigverify::{count_valid_packets, shrink_batches, Deduper},
+    solana_perf::{
+        packet::PacketBatch,
+        sigverify::{
+            count_discarded_packets, count_packets_in_batches, count_valid_packets, shrink_batches,
+            Deduper,
+        },
+    },
     solana_sdk::timing,
     solana_streamer::streamer::{self, PacketBatchReceiver, StreamerError},
     std::{
@@ -23,7 +28,17 @@ use {
     thiserror::Error,
 };
 
-const MAX_SIGVERIFY_BATCH: usize = 10_000;
+// Try to target 50ms, rough timings from mainnet machines
+//
+// 50ms/(300ns/packet) = 166666 packets ~ 1300 batches
+const MAX_DEDUP_BATCH: usize = 165_000;
+
+// 50ms/(25us/packet) = 2000 packets
+const MAX_SIGVERIFY_BATCH: usize = 2_000;
+
+// Packet batch shrinker will reorganize packets into compacted batches if 10%
+// or more of the packets in a group of packet batches have been discarded.
+const MAX_DISCARDED_PACKET_RATE: f64 = 0.10;
 
 #[derive(Error, Debug)]
 pub enum SigVerifyServiceError {
@@ -61,8 +76,10 @@ struct SigVerifierStats {
     total_excess_fail: usize,
     total_valid_packets: usize,
     total_shrinks: usize,
+    total_discard_random: usize,
     total_dedup_time_us: usize,
     total_discard_time_us: usize,
+    total_discard_random_time_us: usize,
     total_verify_time_us: usize,
     total_shrink_time_us: usize,
 }
@@ -174,9 +191,15 @@ impl SigVerifierStats {
             ("total_dedup", self.total_dedup, i64),
             ("total_excess_fail", self.total_excess_fail, i64),
             ("total_valid_packets", self.total_valid_packets, i64),
+            ("total_discard_random", self.total_discard_random, i64),
             ("total_shrinks", self.total_shrinks, i64),
             ("total_dedup_time_us", self.total_dedup_time_us, i64),
             ("total_discard_time_us", self.total_discard_time_us, i64),
+            (
+                "total_discard_random_time_us",
+                self.total_discard_random_time_us,
+                i64
+            ),
             ("total_verify_time_us", self.total_verify_time_us, i64),
             ("total_shrink_time_us", self.total_shrink_time_us, i64),
         );
@@ -231,6 +254,25 @@ impl SigVerifyStage {
         }
     }
 
+    fn maybe_shrink_batches(packet_batches: &mut Vec<PacketBatch>) -> (u64, usize) {
+        let mut shrink_time = Measure::start("sigverify_shrink_time");
+        let num_packets = count_packets_in_batches(packet_batches);
+        let num_discarded_packets = count_discarded_packets(packet_batches);
+        let shrink_total = if num_packets > 0 {
+            let pre_packet_batches_len = packet_batches.len();
+            let discarded_packet_rate = (num_discarded_packets as f64) / (num_packets as f64);
+            if discarded_packet_rate >= MAX_DISCARDED_PACKET_RATE {
+                shrink_batches(packet_batches);
+            }
+            let post_packet_batches_len = packet_batches.len();
+            pre_packet_batches_len.saturating_sub(post_packet_batches_len)
+        } else {
+            0
+        };
+        shrink_time.stop();
+        (shrink_time.as_us(), shrink_total)
+    }
+
     fn verifier<T: SigVerifier>(
         deduper: &Deduper,
         recvr: &PacketBatchReceiver,
@@ -247,34 +289,39 @@ impl SigVerifyStage {
             num_packets,
         );
 
+        let mut discard_random_time = Measure::start("sigverify_discard_random_time");
+        let non_discarded_packets = solana_perf::discard::discard_batches_randomly(
+            &mut batches,
+            MAX_DEDUP_BATCH,
+            num_packets,
+        );
+        let num_discarded_randomly = num_packets.saturating_sub(non_discarded_packets);
+        discard_random_time.stop();
+
         let mut dedup_time = Measure::start("sigverify_dedup_time");
         let dedup_fail = deduper.dedup_packets(&mut batches) as usize;
         dedup_time.stop();
         let num_unique = num_packets.saturating_sub(dedup_fail);
 
         let mut discard_time = Measure::start("sigverify_discard_time");
-        let mut num_valid_packets = num_unique;
+        let mut num_packets_to_verify = num_unique;
         if num_unique > MAX_SIGVERIFY_BATCH {
             Self::discard_excess_packets(&mut batches, MAX_SIGVERIFY_BATCH);
-            num_valid_packets = MAX_SIGVERIFY_BATCH;
+            num_packets_to_verify = MAX_SIGVERIFY_BATCH;
         }
         let excess_fail = num_unique.saturating_sub(MAX_SIGVERIFY_BATCH);
         discard_time.stop();
 
+        // Pre-shrink packet batches if many packets are discarded from dedup / discard
+        let (pre_shrink_time_us, pre_shrink_total) = Self::maybe_shrink_batches(&mut batches);
+
         let mut verify_time = Measure::start("sigverify_batch_time");
-        let mut batches = verifier.verify_batches(batches, num_valid_packets);
+        let mut batches = verifier.verify_batches(batches, num_packets_to_verify);
+        let num_valid_packets = count_valid_packets(&batches);
         verify_time.stop();
 
-        let mut shrink_time = Measure::start("sigverify_shrink_time");
-        let num_valid_packets = count_valid_packets(&batches);
-        let start_len = batches.len();
-        const MAX_EMPTY_BATCH_RATIO: usize = 4;
-        if num_packets > num_valid_packets.saturating_mul(MAX_EMPTY_BATCH_RATIO) {
-            let valid = shrink_batches(&mut batches);
-            batches.truncate(valid);
-        }
-        let total_shrinks = start_len.saturating_sub(batches.len());
-        shrink_time.stop();
+        // Post-shrink packet batches if many packets are discarded from sigverify
+        let (post_shrink_time_us, post_shrink_total) = Self::maybe_shrink_batches(&mut batches);
 
         sendr.send(batches)?;
 
@@ -309,12 +356,14 @@ impl SigVerifyStage {
         stats.total_packets += num_packets;
         stats.total_dedup += dedup_fail;
         stats.total_valid_packets += num_valid_packets;
+        stats.total_discard_random_time_us += discard_random_time.as_us() as usize;
+        stats.total_discard_random += num_discarded_randomly;
         stats.total_excess_fail += excess_fail;
-        stats.total_shrinks += total_shrinks;
+        stats.total_shrinks += pre_shrink_total + post_shrink_total;
         stats.total_dedup_time_us += dedup_time.as_us() as usize;
         stats.total_discard_time_us += discard_time.as_us() as usize;
         stats.total_verify_time_us += verify_time.as_us() as usize;
-        stats.total_shrink_time_us += shrink_time.as_us() as usize;
+        stats.total_shrink_time_us += (pre_shrink_time_us + post_shrink_time_us) as usize;
 
         Ok(())
     }
@@ -385,8 +434,8 @@ mod tests {
     use crate::sigverify::TransactionSigVerifier;
     use crate::sigverify_stage::timing::duration_as_ms;
     use crossbeam_channel::unbounded;
-    use solana_perf::packet::to_packet_batches;
     use solana_perf::test_tx::test_tx;
+    use solana_perf::{packet::to_packet_batches, sigverify::count_packets_in_batches};
     use std::sync::mpsc::channel;
     use {super::*, solana_perf::packet::Packet};
 
@@ -421,7 +470,7 @@ mod tests {
     }
     fn gen_batches(use_same_tx: bool) -> Vec<PacketBatch> {
         let len = 4096;
-        let chunk_size = 1024;
+        let chunk_size = 128;
         if use_same_tx {
             let tx = test_tx();
             to_packet_batches(&vec![tx; len], chunk_size)
@@ -472,5 +521,42 @@ mod tests {
         trace!("received: {}", received);
         drop(packet_s);
         stage.join().unwrap();
+    }
+
+    #[test]
+    fn test_maybe_shrink_batches() {
+        let mut batches = gen_batches(true);
+        let num_generated_batches = batches.len();
+        let num_packets = count_packets_in_batches(&batches);
+        assert_eq!(SigVerifyStage::maybe_shrink_batches(&mut batches).1, 0);
+
+        // discard until the threshold is met but not exceeded
+        {
+            let mut index = 0;
+            batches.iter_mut().for_each(|batch| {
+                batch.packets.iter_mut().for_each(|p| {
+                    if ((index + 1) as f64 / num_packets as f64) < MAX_DISCARDED_PACKET_RATE {
+                        p.meta.set_discard(true);
+                    }
+                    index += 1;
+                })
+            });
+        }
+
+        assert_eq!(SigVerifyStage::maybe_shrink_batches(&mut batches).1, 0);
+
+        // discard one more to exceed shrink threshold
+        batches.last_mut().unwrap().packets[0]
+            .meta
+            .set_discard(true);
+
+        let expected_num_shrunk_batches =
+            1.max((num_generated_batches as f64 * MAX_DISCARDED_PACKET_RATE) as usize);
+        assert_eq!(
+            SigVerifyStage::maybe_shrink_batches(&mut batches).1,
+            expected_num_shrunk_batches
+        );
+        let expected_remaining_batches = num_generated_batches - expected_num_shrunk_batches;
+        assert_eq!(batches.len(), expected_remaining_batches);
     }
 }
