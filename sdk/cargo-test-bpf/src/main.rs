@@ -99,7 +99,12 @@ where
     }
 }
 
-fn test_bpf_package(config: &Config, target_directory: &Path, package: &cargo_metadata::Package, package_arg: bool) {
+fn test_bpf_package(
+    config: &Config,
+    target_directory: &Path,
+    package: &cargo_metadata::Package,
+    package_arg: bool,
+) {
     let set_test_bpf_feature = package.features.contains_key("test-bpf");
 
     let bpf_out_dir = config
@@ -189,7 +194,12 @@ fn test_bpf(config: Config, manifest_path: Option<PathBuf>) {
 
     if let Some(root_package) = metadata.root_package() {
         if !config.workspace {
-            test_bpf_package(&config, metadata.target_directory.as_ref(), root_package, false);
+            test_bpf_package(
+                &config,
+                metadata.target_directory.as_ref(),
+                root_package,
+                false,
+            );
             return;
         }
     }
@@ -197,12 +207,14 @@ fn test_bpf(config: Config, manifest_path: Option<PathBuf>) {
     let all_bpf_packages = metadata
         .packages
         .iter()
-        .filter_map(|package|if config.packages.is_empty(){
-            Some((package, false))
-        } else if config.packages.contains(&package.name) {
-            Some((package, true))
-        } else {
-            None
+        .filter_map(|package| {
+            if config.packages.is_empty() {
+                Some((package, false))
+            } else if config.packages.contains(&package.name) {
+                Some((package, true))
+            } else {
+                None
+            }
         })
         .filter(|(package, _)| {
             if metadata.workspace_members.contains(&package.id) {
@@ -216,7 +228,12 @@ fn test_bpf(config: Config, manifest_path: Option<PathBuf>) {
         });
 
     for (package, package_arg) in all_bpf_packages {
-        test_bpf_package(&config, metadata.target_directory.as_ref(), package, package_arg);
+        test_bpf_package(
+            &config,
+            metadata.target_directory.as_ref(),
+            package,
+            package_arg,
+        );
     }
 }
 

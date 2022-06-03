@@ -397,20 +397,22 @@ fn link_bpf_toolchain(config: &Config) {
     }
 }
 
-fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_metadata::Package, package_arg: bool) {
+fn build_bpf_package(
+    config: &Config,
+    target_directory: &Path,
+    package: &cargo_metadata::Package,
+    package_arg: bool,
+) {
     let program_name = {
-        let mut cdylib_targets = package
-            .targets
-            .iter()
-            .filter_map(|target| {
-                if target.crate_types.contains(&"cdylib".to_string()) {
-                    Some(&target.name)
-                } else {
-                    None
-                }
-            });
+        let mut cdylib_targets = package.targets.iter().filter_map(|target| {
+            if target.crate_types.contains(&"cdylib".to_string()) {
+                Some(&target.name)
+            } else {
+                None
+            }
+        });
 
-        match cdylib_targets.next(){
+        match cdylib_targets.next() {
             Some(target) => {
                 if cdylib_targets.next().is_some() {
                     eprintln!(
@@ -420,7 +422,7 @@ fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_m
                     exit(1);
                 }
                 Some(target.replace('-', "_"))
-            },
+            }
             None => {
                 println!(
                     "Note: {} crate does not contain a cdylib target",
@@ -550,7 +552,7 @@ fn build_bpf_package(config: &Config, target_directory: &Path, package: &cargo_m
         "bpfel-unknown-unknown",
         "--release",
     ];
-    if package_arg{
+    if package_arg {
         cargo_build_args.push("-p");
         cargo_build_args.push(package_name);
     }
@@ -695,7 +697,12 @@ fn build_bpf(config: Config, manifest_path: Option<PathBuf>) {
 
     if let Some(root_package) = metadata.root_package() {
         if !config.workspace {
-            build_bpf_package(&config, metadata.target_directory.as_ref(), root_package, false);
+            build_bpf_package(
+                &config,
+                metadata.target_directory.as_ref(),
+                root_package,
+                false,
+            );
             return;
         }
     }
@@ -703,12 +710,14 @@ fn build_bpf(config: Config, manifest_path: Option<PathBuf>) {
     let all_bpf_packages = metadata
         .packages
         .iter()
-        .filter_map(|package|if config.packages.is_empty() {
-            Some((package, false))
-        } else if config.packages.contains(&package.name){
-            Some((package, true))
-        } else {
-            None
+        .filter_map(|package| {
+            if config.packages.is_empty() {
+                Some((package, false))
+            } else if config.packages.contains(&package.name) {
+                Some((package, true))
+            } else {
+                None
+            }
         })
         .filter(|(package, _)| {
             if metadata.workspace_members.contains(&package.id) {
@@ -722,7 +731,12 @@ fn build_bpf(config: Config, manifest_path: Option<PathBuf>) {
         });
 
     for (package, package_arg) in all_bpf_packages {
-        build_bpf_package(&config, metadata.target_directory.as_ref(), package, package_arg);
+        build_bpf_package(
+            &config,
+            metadata.target_directory.as_ref(),
+            package,
+            package_arg,
+        );
     }
 }
 
@@ -862,7 +876,9 @@ fn main() {
         offline: matches.is_present("offline"),
         verbose: matches.is_present("verbose"),
         workspace: matches.is_present("workspace"),
-        packages: values_t!(matches, "package", String).ok().unwrap_or_default(),
+        packages: values_t!(matches, "package", String)
+            .ok()
+            .unwrap_or_default(),
     };
     let manifest_path = value_t!(matches, "manifest_path", PathBuf).ok();
     build_bpf(config, manifest_path);
