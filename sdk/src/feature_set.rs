@@ -428,6 +428,37 @@ pub mod check_syscall_outputs_do_not_overlap {
 }
 
 lazy_static! {
+    pub static ref MAINNET_NAMES: HashMap<PubKey, &'static str> = [
+        (disable_fee_calculator::id(), "deprecate fee calculator"),
+        (vote_authorize_with_seed::id(), "An instruction you can use to change a vote accounts authority when the current authority is a derived key #25860"),
+        (syscall_saturated_math::id(), "syscalls use saturated math"),
+        (merge_nonce_error_into_system_error::id(), "merge NonceError into SystemError"),
+        (instructions_sysvar_owned_by_sysvar::id(), "fix owner for instructions sysvar"),
+        (return_none_for_zero_lamport_accounts::id(), "return none for zero lamport accounts #27800"),
+        (require_static_program_ids_in_transaction::id(), "require static program ids in versioned transactions"),
+        (include_account_index_in_rent_error::id(), "include account index in rent tx error #25190"),
+        (versioned_tx_message_enabled::id(), "enable versioned transaction message processing"),
+        (preserve_rent_epoch_for_rent_exempt_accounts::id(), "preserve rent epoch for rent exempt accounts #26479"),
+        (filter_votes_outside_slot_hashes::id(), "filter vote slots older than the slot hashes history"),
+        (prevent_crediting_accounts_that_end_rent_paying::id(), "prevent crediting rent paying accounts #26606"),
+    ]
+    .iter()
+    .cloned()
+    .collect();
+
+    /// Unique identifier of the current software's feature set
+    pub static ref ID: Hash = {
+        let mut hasher = Hasher::default();
+        let mut feature_ids = MAINNET_NAMES.keys().collect::<Vec<_>>();
+        feature_ids.sort();
+        for feature in feature_ids {
+            hasher.hash(feature.as_ref());
+        }
+        hasher.result()
+    };
+}
+
+lazy_static! {
     /// Map of feature identifiers to user-visible description
     pub static ref FEATURE_NAMES: HashMap<Pubkey, &'static str> = [
         (secp256k1_program_enabled::id(), "secp256k1 program"),
@@ -581,6 +612,12 @@ impl Default for FeatureSet {
     }
 }
 impl FeatureSet {
+    pub fn mainnet() -> Self {
+        Self {
+            active: HashMap::new(),
+            inactive: MAINNET_NAMES.keys().cloned().collect(),
+        }
+    }
     pub fn is_active(&self, feature_id: &Pubkey) -> bool {
         self.active.contains_key(feature_id)
     }

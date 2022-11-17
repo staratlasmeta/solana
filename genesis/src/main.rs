@@ -565,6 +565,9 @@ fn main() -> Result<(), Box<dyn error::Error>> {
     }
 
     solana_stake_program::add_genesis_accounts(&mut genesis_config);
+    if genesis_config.cluster_type == ClusterType::MainnetBeta {
+        solana_runtime::genesis_utils::activate_mainnet_features(&mut genesis_config);
+    }
     if genesis_config.cluster_type == ClusterType::Development {
         solana_runtime::genesis_utils::activate_all_features(&mut genesis_config);
     }

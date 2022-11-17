@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use {
     solana_sdk::{
         account::{Account, AccountSharedData},
@@ -182,6 +183,12 @@ pub fn create_genesis_config_with_leader(
         mint_keypair,
         voting_keypair,
         validator_pubkey: *validator_pubkey,
+    }
+}
+
+pub fn activate_mainnet_feature(genesis_config: &mut GenesisConfig) {
+    for feature_id in FeatureSet::mainnet().inactive {
+        activate_feature(genesis_config, feature_id);
     }
 }
 
