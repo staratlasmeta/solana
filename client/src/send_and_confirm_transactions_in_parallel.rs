@@ -190,9 +190,10 @@ async fn send_transaction_with_rpc_fallback(
     index: usize,
 ) -> Result<()> {
     let send_over_rpc = if let Some(tpu_client) = tpu_client {
-        !tpu_client
-            .send_wire_transaction(serialized_transaction.clone())
-            .await
+        // !tpu_client
+        //     .send_wire_transaction(serialized_transaction.clone())
+        //     .await
+        true
     } else {
         true
     };
