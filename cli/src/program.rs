@@ -2729,7 +2729,7 @@ fn send_deploy_messages(
                         &write_messages,
                         &[fee_payer_signer, write_signer],
                         SendAndConfirmConfig {
-                            resign_txs_count: Some(5),
+                            resign_txs_count: Some(1000),
                             with_spinner: true,
                         },
                     )
