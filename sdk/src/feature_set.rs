@@ -1126,4 +1126,34 @@ mod test {
         feature_set.deactivate(&feature);
         assert!(!feature_set.is_active(&feature));
     }
+
+    #[test]
+    fn replace_all_keys() -> anyhow::Result<()> {
+        use crate::signer::EncodableKey;
+        use crate::signer::Signer;
+        use std::fs;
+        use std::io::{Read, Write};
+        const FEATURE_SET_PATH: &str = "src/feature_set.rs";
+        let feature_dir = std::path::Path::new("../feature-keys");
+        fs::create_dir_all(feature_dir)?;
+        let mut file = fs::File::open(FEATURE_SET_PATH)?;
+        let mut contents = String::new();
+        file.read_to_string(&mut contents)?;
+        for (feature, feature_name) in solana_sdk::feature_set::FEATURE_NAMES.iter() {
+            let sanitized_feature_name = feature_name
+                .replace(" ", "_")
+                .replace("/", "_")
+                .to_lowercase();
+            let new_key = solana_sdk::signer::keypair::Keypair::new();
+            let mut new_file =
+                fs::File::create(feature_dir.join(format!("{sanitized_feature_name}.json")))
+                    .unwrap();
+            new_key.write(&mut new_file).unwrap();
+            contents =
+                contents.replace(&feature.to_string(), new_key.pubkey().to_string().as_str());
+        }
+        let mut new_file = fs::File::create(feature_dir.join("feature_set.rs"))?;
+        new_file.write_all(contents.as_bytes())?;
+        Ok(())
+    }
 }
