@@ -6,6 +6,7 @@
 //!
 //! [`sysvar::epoch_rewards`]: crate::sysvar::epoch_rewards
 
+use solana_program::padding::ZeroedPadding;
 use {crate::hash::Hash, solana_sdk_macro::NoPadding, std::ops::AddAssign};
 
 #[repr(C, align(16))]
@@ -40,7 +41,8 @@ pub struct EpochRewards {
     pub active: bool,
 
     /// Excess padding, should be set to `0`s
-    pub _padding: [u8; 15],
+    #[serde(skip)]
+    pub _padding: ZeroedPadding<15>,
 }
 
 impl EpochRewards {

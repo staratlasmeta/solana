@@ -4,6 +4,7 @@
 
 #![allow(clippy::arithmetic_side_effects)]
 
+use crate::padding::ZeroedPadding;
 use {crate::clock::DEFAULT_SLOTS_PER_EPOCH, solana_sdk_macro::NoPadding};
 
 /// Configuration of network rent.
@@ -25,7 +26,8 @@ pub struct Rent {
     pub burn_percent: u8,
 
     /// Excess padding, should be set to `0`s
-    pub _padding: [u8; 7],
+    #[serde(skip)]
+    pub _padding: ZeroedPadding<7>,
 }
 
 /// Default rental rate in lamports/byte-year.
@@ -59,7 +61,7 @@ impl Default for Rent {
             lamports_per_byte_year: DEFAULT_LAMPORTS_PER_BYTE_YEAR,
             exemption_threshold: DEFAULT_EXEMPTION_THRESHOLD,
             burn_percent: DEFAULT_BURN_PERCENT,
-            _padding: [0; 7],
+            _padding: Default::default(),
         }
     }
 }
@@ -224,7 +226,7 @@ mod tests {
             lamports_per_byte_year: 1,
             exemption_threshold: 2.2,
             burn_percent: 3,
-            _padding: [0; 7],
+            _padding: Default::default(),
         };
         #[allow(clippy::clone_on_copy)]
         let cloned_rent = rent.clone();
