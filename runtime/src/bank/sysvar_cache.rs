@@ -130,6 +130,7 @@ mod tests {
             total_rewards: 100,
             distributed_rewards: 10,
             active: true,
+            _padding: [0; 15],
         };
         bank1.create_epoch_rewards_sysvar(
             expected_epoch_rewards.total_rewards,

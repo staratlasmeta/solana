@@ -4,12 +4,12 @@
 
 #![allow(clippy::arithmetic_side_effects)]
 
-use {crate::clock::DEFAULT_SLOTS_PER_EPOCH, solana_sdk_macro::CloneZeroed};
+use {crate::clock::DEFAULT_SLOTS_PER_EPOCH, solana_sdk_macro::NoPadding};
 
 /// Configuration of network rent.
 #[repr(C)]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Serialize, Deserialize, PartialEq, CloneZeroed, Debug)]
+#[derive(Serialize, Deserialize, PartialEq, NoPadding, Debug, Clone)]
 pub struct Rent {
     /// Rental rate in lamports/byte-year.
     pub lamports_per_byte_year: u64,
@@ -23,6 +23,9 @@ pub struct Rent {
     /// Valid values are in the range [0, 100]. The remaining percentage is
     /// distributed to validators.
     pub burn_percent: u8,
+
+    /// Excess padding, should be set to `0`s
+    pub _padding: [u8; 7],
 }
 
 /// Default rental rate in lamports/byte-year.
@@ -56,6 +59,7 @@ impl Default for Rent {
             lamports_per_byte_year: DEFAULT_LAMPORTS_PER_BYTE_YEAR,
             exemption_threshold: DEFAULT_EXEMPTION_THRESHOLD,
             burn_percent: DEFAULT_BURN_PERCENT,
+            _padding: [0; 7],
         }
     }
 }
@@ -220,6 +224,7 @@ mod tests {
             lamports_per_byte_year: 1,
             exemption_threshold: 2.2,
             burn_percent: 3,
+            _padding: [0; 7],
         };
         #[allow(clippy::clone_on_copy)]
         let cloned_rent = rent.clone();

@@ -6,11 +6,11 @@
 //!
 //! [`sysvar::epoch_rewards`]: crate::sysvar::epoch_rewards
 
-use {crate::hash::Hash, solana_sdk_macro::CloneZeroed, std::ops::AddAssign};
+use {crate::hash::Hash, solana_sdk_macro::NoPadding, std::ops::AddAssign};
 
 #[repr(C, align(16))]
 #[cfg_attr(feature = "frozen-abi", derive(AbiExample))]
-#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Default, CloneZeroed)]
+#[derive(Debug, Serialize, Deserialize, PartialEq, Eq, Default, Clone, NoPadding)]
 pub struct EpochRewards {
     /// The starting block height of the rewards distribution in the current
     /// epoch
@@ -38,6 +38,9 @@ pub struct EpochRewards {
     /// Whether the rewards period (including calculation and distribution) is
     /// active
     pub active: bool,
+
+    /// Excess padding, should be set to `0`s
+    pub _padding: [u8; 15],
 }
 
 impl EpochRewards {
