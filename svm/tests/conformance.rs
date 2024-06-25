@@ -279,6 +279,7 @@ fn run_fixture(fixture: InstrFixture, filename: OsString, execute_as_instr: bool
     };
     let processor_config = TransactionProcessingConfig {
         account_overrides: None,
+        check_program_modification_slot: false,
         compute_budget: None,
         log_messages_bytes_limit: None,
         limit_to_load_programs: true,
@@ -413,7 +414,7 @@ fn execute_fixture_as_instr(
     let mut transaction_context = TransactionContext::new(
         transaction_accounts,
         rent,
-        compute_budget.max_invoke_stack_height,
+        compute_budget.max_instruction_stack_depth,
         compute_budget.max_instruction_trace_length,
     );
 
